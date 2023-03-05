@@ -39,18 +39,17 @@ struct TypeSchema {
     terms: HashMap<String, Type>,
 }
 
-#[repr(u8)]
 #[derive(BorshSerialize, BorshDeserialize, BorshSchema, Debug, Clone)]
-enum Deeper {
-    Data1(String, String, u8, i64, f32),
-    Data2(Vec<u16>, u64),
+enum Something {
+    A,
+    B,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, BorshSchema, Debug, Clone)]
 struct Other {
     name: String,
     cool: bool,
-    deeper: Deeper,
+    some: Something,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, BorshSchema, Debug, Clone)]
@@ -273,6 +272,65 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
     Type::Undefined
 }
 
+struct TypeIterator<'a> {
+    schema: &'a TypeSchema,
+    stack: Vec<(&'a Type, &'a Type)>,
+}
+
+impl<'a> TypeIterator<'a> {
+    fn new(schema: &'a TypeSchema) -> TypeIterator<'a> {
+        TypeIterator { stack: vec![(&Type::Undefined, &schema.schema)], schema: schema }
+    }
+
+    fn add_child_nodes(&mut self, tinfo: &'a TypeInfo, lookup: bool, schema: &'a TypeSchema, parent: &'a Type) {
+        if tinfo.fields.is_some() {
+            let subfields: &Vec<Type> = &tinfo.fields.as_ref().unwrap().as_ref();
+            for child in subfields.iter().rev() {
+                self.stack.push((parent, child));
+            }
+        } else if lookup {
+            let rnode = schema.terms.get(&tinfo.term.clone().unwrap());
+            if rnode.is_some() {
+                self.add_nodes(&rnode.unwrap(), schema);
+            }
+        }
+    }
+
+    fn add_nodes(&mut self, node: &'a Type, schema: &'a TypeSchema) {
+        match node {
+            Type::Bool(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::Integer(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::Float(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::String(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::Enum(ti) => self.add_child_nodes(&ti, true, schema, node),
+            Type::EnumVariant(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::Tuple(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::Struct(ti) => self.add_child_nodes(&ti, true, schema, node),
+            Type::Array(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::Vec(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::Option(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::Result(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::HashSet(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::HashMap(ti) => self.add_child_nodes(&ti, false, schema, node),
+            _ => {}
+        }
+    }
+}
+
+impl<'a> Iterator for TypeIterator<'a> {
+    type Item = (&'a Type, &'a Type);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.stack.pop() {
+            None => None,
+            Some((par, node)) => {
+                self.add_nodes(&node, &self.schema);
+                Some((par, node))
+            }
+        }
+    }
+}
+
 fn main() {
     //let person = Person { name: "Alice".into(), age: 30 };
     
@@ -294,8 +352,18 @@ fn main() {
     //println!("Type {:?}", ty);
 
     // Serialize it to a JSON string.
-    let j = serde_json::to_string(&tsch).unwrap();
+    //let j = serde_json::to_string(&tsch).unwrap();
 
     // Print, write to a file, or send to an HTTP server.
-    println!("{}", j);
+    //println!("{}", j);
+
+    let mut iter = TypeIterator::new(&tsch);
+    let mut counter: u32 = 0;
+    while let Some(node) = iter.next() {
+        counter += 1;
+        println!("{:?}", counter);
+        println!("Item {:?}", node.1);
+        println!("Parent {:?}", node.0);
+        println!("");
+    }
 }
