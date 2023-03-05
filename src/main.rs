@@ -54,9 +54,11 @@ struct Other {
 
 #[derive(BorshSerialize, BorshDeserialize, BorshSchema, Debug, Clone)]
 struct Person {
+    uuid: u128,
     name: String,
     cool: bool,
     other: Vec<Other>,
+    friends: Vec<u128>,
 }
 
 fn get_schema<T: BorshSchemaTrait>() -> BorshSchemaContainer {
