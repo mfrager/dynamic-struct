@@ -1,5 +1,4 @@
 use regex::Regex;
-use borsh::maybestd::collections::HashMap;
 use borsh::{BorshSerialize, BorshDeserialize};
 use borsh::schema::{BorshSchema as BorshSchemaTrait, BorshSchemaContainer, Definition, Fields};
 use borsh_derive::{BorshSchema};
@@ -8,7 +7,6 @@ use serde_derive::{Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize)]
 struct TypeInfo {
     name: Option<String>,
-    term: Option<String>,
     signed: Option<bool>,
     length: Option<u32>,
     fields: Option<Vec<Type>>,
@@ -36,38 +34,22 @@ enum Type {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 struct TypeSchema {
     schema: Type,
-    terms: HashMap<String, Type>,
-}
-
-#[repr(u8)]
-#[derive(BorshSerialize, BorshDeserialize, BorshSchema, Debug, Clone)]
-enum Deeper {
-    Data1(String, String, u8, i64, f32),
-    Data2(Vec<u16>, u64),
-}
-
-#[derive(BorshSerialize, BorshDeserialize, BorshSchema, Debug, Clone)]
-struct Other {
-    name: String,
-    cool: bool,
-    deeper: Deeper,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, BorshSchema, Debug, Clone)]
 struct Person {
     name: String,
     cool: bool,
-    other: Vec<Other>,
 }
 
 fn get_schema<T: BorshSchemaTrait>() -> BorshSchemaContainer {
     T::schema_container()
 }
 
-fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, declaration: &String, result: &mut TypeSchema, root: bool) -> Type {
+fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, declaration: &String) -> Type {
     //println!("Field name {:?}", field_name);
     //println!("Declaration {:?}", declaration);
-    let name = match field_name {
+    let mut name = match field_name {
         Some(str_ref) => { Some(str_ref.to_owned()) },
         None => None,
     };
@@ -81,62 +63,47 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
                 Definition::Struct {fields: f} => {
                     match f {
                         Fields::NamedFields(v) => {
-                            if root {
-                                let mut fs = Vec::new();
-                                for field in v {
-                                    fs.push(get_type(container, Some(&field.0), &field.1, result, false));
-                                }
-                                return Type::Struct(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fs), term: Some(declaration.clone()) });
-                            } else {
-                                let found_struct = result.terms.get(&declaration.clone());
-                                if found_struct == None {
-                                    let mut fs = Vec::new();
-                                    for field in v {
-                                        fs.push(get_type(container, Some(&field.0), &field.1, result, false));
-                                    }
-                                    let ts = Type::Struct(TypeInfo { name: None, length: None, signed: None, fields: Some(fs), term: Some(declaration.clone()) });
-                                    result.terms.insert(declaration.clone(), ts.clone());
-                                }
-                                return Type::Struct(TypeInfo { name: name.clone(), length: None, signed: None, fields: None, term: Some(declaration.clone()) });
+                            let mut fields = Vec::new();
+                            for field in v {
+                                fields.push(get_type(container, Some(&field.0), &field.1));
                             }
+                            if name == None {
+                                name = Some(declaration.clone());
+                            }
+                            return Type::Struct(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields) })
                         },
                         Fields::UnnamedFields(v) => {
                             let mut fields = Vec::new();
                             for field in v {
-                                fields.push(get_type(container, None, &field, result, false));
+                                fields.push(get_type(container, None, &field));
                             }
-                            return Type::EnumVariant(TypeInfo { name: name.clone(), length: Some(v.len() as u32), signed: None, fields: Some(fields), term: None })
+                            return Type::EnumVariant(TypeInfo { name: name.clone(), length: Some(v.len() as u32), signed: None, fields: Some(fields) })
                         },
-                        Fields::Empty => return Type::EnumVariant(TypeInfo { name: name.clone(), length: None, signed: None, fields: None, term: None }),
+                        Fields::Empty => return Type::EnumVariant(TypeInfo { name: name.clone(), length: None, signed: None, fields: None }),
                     }
                 },
                 Definition::Array { elements: e, length: l } => {
-                    let fields = vec![get_type(container, None, &e, result, false)];
-                    return Type::Array(TypeInfo { name: name.clone(), length: Some(l.to_owned()), signed: None, fields: Some(fields), term: None })
+                    let fields = vec![get_type(container, None, &e)];
+                    return Type::Array(TypeInfo { name: name.clone(), length: Some(l.to_owned()), signed: None, fields: Some(fields) })
                 },
                 Definition::Sequence { elements: e } => {
-                    let fields = vec![get_type(container, None, &e, result, false)];
-                    return Type::Vec(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields), term: None })
+                    let fields = vec![get_type(container, None, &e)];
+                    return Type::Vec(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields) })
                 },
                 Definition::Enum {variants: v} => {
-                    let found_enum = result.terms.get(&declaration.clone());
-                    if found_enum == None {
-                        let mut enums = Vec::new();
-                        for ev in v {
-                            enums.push(get_type(container, Some(&ev.0), &ev.1, result, false));
-                        }
-                        let ts = Type::Enum(TypeInfo { name: None, length: Some(v.len() as u32), signed: None, fields: Some(enums), term: Some(declaration.clone()) });
-                        result.terms.insert(declaration.clone(), ts.clone());
+                    let mut enums = Vec::new();
+                    for ev in v {
+                        enums.push(get_type(container, Some(&ev.0), &ev.1));
                     }
-                    return Type::Enum(TypeInfo { name: name.clone(), length: None, signed: None, fields: None, term: Some(declaration.clone()) })
+                    return Type::Enum(TypeInfo { name: name.clone(), length: Some(v.len() as u32), signed: None, fields: Some(enums) })
                 },
                 _ => {},
             }
         }
     }
     match declaration.as_str() {
-        "bool" => return Type::Bool(TypeInfo {name: name.clone(), signed: None, length: None, fields: None, term: None}),
-        "string" => return Type::String(TypeInfo {name: name.clone(), signed: None, length: None, fields: None, term: None}),
+        "bool" => return Type::Bool(TypeInfo {name: name.clone(), signed: None, length: None, fields: None}),
+        "string" => return Type::String(TypeInfo {name: name.clone(), signed: None, length: None, fields: None}),
         _ => {},
     };
     let re_unsigned_int = Regex::new(r"^u(\d+)$").unwrap();
@@ -144,7 +111,7 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
         Some(bits_info) => {
             let bytes = bits_info.get(1).unwrap().as_str().parse::<u32>().unwrap().checked_div(8).unwrap();
             if !(bytes == 1 || bytes == 2 || bytes == 4 || bytes == 8 || bytes == 16) { panic!("Invalid unsigned integer bytes") }
-            return Type::Integer(TypeInfo {name: name.clone(), signed: Some(false), length: Some(bytes), fields: None, term: None})
+            return Type::Integer(TypeInfo {name: name.clone(), signed: Some(false), length: Some(bytes), fields: None})
         },
         None => {},
     }
@@ -153,7 +120,7 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
         Some(bits_info) => {
             let bytes = bits_info.get(1).unwrap().as_str().parse::<u32>().unwrap().checked_div(8).unwrap();
             if !(bytes == 1 || bytes == 2 || bytes == 4 || bytes == 8 || bytes == 16) { panic!("Invalid signed integer bytes") }
-            return Type::Integer(TypeInfo {name: name.clone(), signed: Some(true), length: Some(bytes), fields: None, term: None})
+            return Type::Integer(TypeInfo {name: name.clone(), signed: Some(true), length: Some(bytes), fields: None})
         },
         None => {},
     }
@@ -162,7 +129,7 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
         Some(bits_info) => {
             let bytes = bits_info.get(1).unwrap().as_str().parse::<u32>().unwrap().checked_div(8).unwrap();
             if !(bytes == 4 || bytes == 8) { panic!("Invalid signed integer bytes") }
-            return Type::Float(TypeInfo {name: name.clone(), length: Some(bytes), signed: None, fields: None, term: None})
+            return Type::Float(TypeInfo {name: name.clone(), length: Some(bytes), signed: None, fields: None})
         },
         None => {},
     }
@@ -174,9 +141,9 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
                 Definition::Tuple { elements: ve } => {
                     let mut fields = Vec::new();
                     for e in ve {
-                        fields.push(get_type(container, None, &e, result, false));
+                        fields.push(get_type(container, None, &e));
                     }
-                    return Type::Tuple(TypeInfo { name: name.clone(), length: Some(ve.len() as u32), signed: None, fields: Some(fields), term: None })
+                    return Type::Tuple(TypeInfo { name: name.clone(), length: Some(ve.len() as u32), signed: None, fields: Some(fields) })
                 },
                 _ => {}
             }
@@ -189,8 +156,8 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
             let array_def = container.definitions.get(array_txt.get(0).unwrap().as_str()).unwrap();
             match array_def {
                 Definition::Array { elements: e, length: l } => {
-                    let fields = vec![get_type(container, None, &e, result, false)];
-                    return Type::Array(TypeInfo { name: name.clone(), length: Some(l.to_owned()), signed: None, fields: Some(fields), term: None })
+                    let fields = vec![get_type(container, None, &e)];
+                    return Type::Array(TypeInfo { name: name.clone(), length: Some(l.to_owned()), signed: None, fields: Some(fields) })
                 },
                 _ => {}
             }
@@ -203,8 +170,8 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
             let vec_def = container.definitions.get(vec_txt.get(0).unwrap().as_str()).unwrap();
             match vec_def {
                 Definition::Sequence { elements: e } => {
-                    let fields = vec![get_type(container, None, &e, result, false)];
-                    return Type::Vec(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields), term: None })
+                    let fields = vec![get_type(container, None, &e)];
+                    return Type::Vec(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields) })
                 },
                 _ => {}
             }
@@ -217,8 +184,8 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
             let option_def = container.definitions.get(option_txt.get(0).unwrap().as_str()).unwrap();
             match option_def {
                 Definition::Enum { variants: v } => {
-                    let fields = vec![get_type(container, None, &v[1].1, result, false)];
-                    return Type::Option(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields), term: None })
+                    let fields = vec![get_type(container, None, &v[1].1)];
+                    return Type::Option(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields) })
                 },
                 _ => {}
             }
@@ -232,10 +199,10 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
             match result_def {
                 Definition::Enum { variants: v } => {
                     let fields = vec![
-                        get_type(container, None, &v[0].1, result, false), // Ok
-                        get_type(container, None, &v[1].1, result, false), // Err
+                        get_type(container, None, &v[0].1), // Ok
+                        get_type(container, None, &v[1].1), // Err
                     ];
-                    return Type::Result(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields), term: None })
+                    return Type::Result(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields) })
                 },
                 _ => {}
             }
@@ -248,8 +215,8 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
             let hashset_def = container.definitions.get(hashset_txt.get(0).unwrap().as_str()).unwrap();
             match hashset_def {
                 Definition::Sequence { elements: e } => {
-                    let fields = vec![get_type(container, None, &e, result, false)];
-                    return Type::HashSet(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields), term: None })
+                    let fields = vec![get_type(container, None, &e)];
+                    return Type::HashSet(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields) })
                 },
                 _ => {}
             }
@@ -262,8 +229,8 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
             let hashmap_def = container.definitions.get(hashmap_txt.get(0).unwrap().as_str()).unwrap();
             match hashmap_def {
                 Definition::Sequence { elements: e } => {
-                    let fields = vec![get_type(container, None, &e, result, false)];
-                    return Type::HashMap(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields), term: None })
+                    let fields = vec![get_type(container, None, &e)];
+                    return Type::HashMap(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields) })
                 },
                 _ => {}
             }
@@ -289,9 +256,10 @@ fn main() {
     //let def = ctr.definitions.get(&ctr.declaration).unwrap();
     //println!("Definition {:?}", def);
 
-    let mut tsch = TypeSchema { schema: Type::Undefined, terms: HashMap::new() };
-    tsch.schema = get_type(&ctr, Some(&ctr.declaration), &ctr.declaration, &mut tsch, true);
+    let ty = get_type(&ctr, Some(&ctr.declaration), &ctr.declaration);
     //println!("Type {:?}", ty);
+
+    let tsch = TypeSchema { schema: ty };
 
     // Serialize it to a JSON string.
     let j = serde_json::to_string(&tsch).unwrap();
