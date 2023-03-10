@@ -1,3 +1,5 @@
+use std::io::{Result, Write};
+use std::marker::PhantomData;
 use regex::Regex;
 use borsh::maybestd::collections::HashMap;
 use borsh::{BorshSerialize, BorshDeserialize};
@@ -34,12 +36,46 @@ enum Type {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-struct TypeSchema {
+pub struct TypeSchema {
     schema: Type,
     terms: HashMap<String, Type>,
 }
 
-#[derive(BorshSerialize, BorshDeserialize, BorshSchema, Debug, Clone)]
+pub struct CustomWriter<'a, T: BorshSchemaTrait + BorshSerialize> {
+    iter: TypeIterator<'a, T>,
+}
+
+impl<'a, T: BorshSchemaTrait + BorshSerialize> CustomWriter<'a, T> {
+    fn new(schema: &'a TypeSchema) -> Self {
+        let iter = TypeIterator::<T>::new(schema);
+        Self {
+            iter: iter,
+        }
+    }
+}
+
+impl<'a, T: BorshSchemaTrait + BorshSerialize> Write for CustomWriter<'a, T> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        println!("Buffer: {}", buf.len().to_string());
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
+pub trait CustomSerialize: BorshSchemaTrait + BorshSerialize {
+    fn try_to_custom<'a, T: BorshSchemaTrait + BorshSerialize>(&'a self, schema: &'a TypeSchema) -> Result<CustomWriter<T>> {
+        let mut result = CustomWriter::<T>::new(schema);
+        self.serialize(&mut result)?;
+        Ok(result)
+    }
+}
+
+// Data schema 
+
+/*#[derive(BorshSerialize, BorshDeserialize, BorshSchema, Debug, Clone)]
 enum Something {
     A,
     B,
@@ -50,19 +86,26 @@ struct Other {
     name: String,
     cool: bool,
     some: Something,
-}
+}*/
 
 #[derive(BorshSerialize, BorshDeserialize, BorshSchema, Debug, Clone)]
 struct Person {
     uuid: u128,
     name: String,
     cool: bool,
-    other: Vec<Other>,
-    friends: Vec<u128>,
+    //other: Vec<Other>,
+    //friends: Vec<u128>,
 }
 
-fn get_schema<T: BorshSchemaTrait>() -> BorshSchemaContainer {
-    T::schema_container()
+impl CustomSerialize for Person {}
+
+// End data schema
+
+fn get_schema<T: BorshSchemaTrait>() -> TypeSchema {
+    let ctr = T::schema_container();
+    let mut tsch = TypeSchema { schema: Type::Undefined, terms: HashMap::new() };
+    tsch.schema = get_type(&ctr, Some(&ctr.declaration), &ctr.declaration, &mut tsch, true);
+    tsch
 }
 
 fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, declaration: &String, result: &mut TypeSchema, root: bool) -> Type {
@@ -274,14 +317,15 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
     Type::Undefined
 }
 
-struct TypeIterator<'a> {
+struct TypeIterator<'a, T> {
     schema: &'a TypeSchema,
     stack: Vec<(&'a Type, &'a Type)>,
+    data: PhantomData<&'a T>,
 }
 
-impl<'a> TypeIterator<'a> {
-    fn new(schema: &'a TypeSchema) -> TypeIterator<'a> {
-        TypeIterator { stack: vec![(&Type::Undefined, &schema.schema)], schema: schema }
+impl<'a, T: BorshSchemaTrait> TypeIterator<'a, T> {
+    fn new(schema: &'a TypeSchema) -> TypeIterator<'a, T> {
+        TypeIterator { stack: vec![(&Type::Undefined, &schema.schema)], schema: schema, data: PhantomData {} }
     }
 
     fn add_child_nodes(&mut self, tinfo: &'a TypeInfo, lookup: bool, schema: &'a TypeSchema, parent: &'a Type) {
@@ -319,7 +363,7 @@ impl<'a> TypeIterator<'a> {
     }
 }
 
-impl<'a> Iterator for TypeIterator<'a> {
+impl<'a, T: BorshSchemaTrait> Iterator for TypeIterator<'a, T> {
     type Item = (&'a Type, &'a Type);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -334,8 +378,11 @@ impl<'a> Iterator for TypeIterator<'a> {
 }
 
 fn main() {
-    //let person = Person { name: "Alice".into(), age: 30 };
-    
+    let person = Person { name: "Alison".into(), uuid: 30, cool: true };
+
+    let tsch = get_schema::<Person>();
+    person.try_to_custom::<Person>(&tsch).unwrap();
+
     // Serialize the person struct to bytes
     //let encoded = person.try_to_vec().unwrap();
     
@@ -343,14 +390,14 @@ fn main() {
     //let decoded = Person::try_from_slice(&encoded).unwrap();
     //println!("{:?}", decoded); // Output: Person { name: "Alice", age: 30 }
 
-    let ctr = get_schema::<Person>();
+    //let ctr = get_schema::<Person>();
     //println!("Schema container {:?}", ctr);
 
     //let def = ctr.definitions.get(&ctr.declaration).unwrap();
     //println!("Definition {:?}", def);
 
-    let mut tsch = TypeSchema { schema: Type::Undefined, terms: HashMap::new() };
-    tsch.schema = get_type(&ctr, Some(&ctr.declaration), &ctr.declaration, &mut tsch, true);
+    //let mut tsch = TypeSchema { schema: Type::Undefined, terms: HashMap::new() };
+    //tsch.schema = get_type(&ctr, Some(&ctr.declaration), &ctr.declaration, &mut tsch, true);
     //println!("Type {:?}", ty);
 
     // Serialize it to a JSON string.
@@ -359,7 +406,7 @@ fn main() {
     // Print, write to a file, or send to an HTTP server.
     //println!("{}", j);
 
-    let mut iter = TypeIterator::new(&tsch);
+    let mut iter = TypeIterator::<Person>::new(&tsch);
     let mut counter: u32 = 0;
     while let Some(node) = iter.next() {
         counter += 1;
