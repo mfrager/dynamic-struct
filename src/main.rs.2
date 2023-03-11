@@ -1,44 +1,20 @@
-use std::collections::HashSet;
-use uuid::Uuid;
 use regex::Regex;
 use borsh::maybestd::collections::HashMap;
 use borsh::{BorshSerialize, BorshDeserialize};
 use borsh::schema::{BorshSchema as BorshSchemaTrait, BorshSchemaContainer, Definition, Fields};
 use borsh_derive::{BorshSchema};
 use serde_derive::{Serialize};
+use uuid::Uuid;
 use sophia::graph::{*, inmem::FastGraph};
 use sophia::iri::Iri;
 use sophia::ns::{Namespace, rdfs, rdf};
 use sophia::parser::turtle;
 use sophia::serializer::*;
 use sophia::serializer::nt::NtSerializer;
-use sophia::term::Result;
-use sophia::term::iri::error::InvalidIri;
 use sophia::term::literal::convert::AsLiteral;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-#[repr(u8)]
-enum DataType {
-    Bool,
-    Int,
-    Float,
-    String,
-    Enum,
-    Variant,
-    Tuple,
-    Struct,
-    Array,
-    Vec,
-    Option,
-    Result,
-    HashSet,
-    HashMap,
-    Undefined,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-struct Type {
-    datatype: DataType,
+struct TypeInfo {
     name: Option<String>,
     term: Option<String>,
     signed: Option<bool>,
@@ -46,17 +22,23 @@ struct Type {
     fields: Option<Vec<Type>>,
 }
 
-impl Default for Type {
-    fn default() -> Self {
-        Type {
-            datatype: DataType::Undefined,
-            name: None,
-            term: None,
-            signed: None,
-            length: None,
-            fields: None,
-        }
-    }
+#[derive(Debug, Clone, PartialEq, Serialize)]
+enum Type {
+    Bool(TypeInfo),
+    Integer(TypeInfo),
+    Float(TypeInfo),
+    String(TypeInfo),
+    Enum(TypeInfo),
+    EnumVariant(TypeInfo),
+    Tuple(TypeInfo),
+    Struct(TypeInfo),
+    Array(TypeInfo),
+    Vec(TypeInfo),
+    Option(TypeInfo),
+    Result(TypeInfo),
+    HashSet(TypeInfo),
+    HashMap(TypeInfo),
+    Undefined,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -65,7 +47,7 @@ struct TypeSchema {
     terms: HashMap<String, Type>,
 }
 
-#[derive(BorshSerialize, BorshDeserialize, BorshSchema, Debug, Clone)]
+/*#[derive(BorshSerialize, BorshDeserialize, BorshSchema, Debug, Clone)]
 enum Something {
     A,
     B,
@@ -73,17 +55,15 @@ enum Something {
 
 #[derive(BorshSerialize, BorshDeserialize, BorshSchema, Debug, Clone)]
 struct Other {
-    label: String,
+    name: String,
     cool: bool,
     some: Something,
-}
+}*/
 
 #[derive(BorshSerialize, BorshDeserialize, BorshSchema, Debug, Clone)]
 struct Person {
     name: String,
     age: u32,
-    zoom: Other,
-    thing: Vec<Other>,
 }
 
 fn get_schema<T: BorshSchemaTrait>() -> BorshSchemaContainer {
@@ -112,7 +92,7 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
                                 for field in v {
                                     fs.push(get_type(container, Some(&field.0), &field.1, result, false));
                                 }
-                                return Type { datatype: DataType::Struct, name: name.clone(), length: None, signed: None, fields: Some(fs), term: Some(declaration.clone()) };
+                                return Type::Struct(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fs), term: Some(declaration.clone()) });
                             } else {
                                 let found_struct = result.terms.get(&declaration.clone());
                                 if found_struct == None {
@@ -120,10 +100,10 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
                                     for field in v {
                                         fs.push(get_type(container, Some(&field.0), &field.1, result, false));
                                     }
-                                    let ts = Type { datatype: DataType::Struct, name: None, length: None, signed: None, fields: Some(fs), term: Some(declaration.clone()) };
+                                    let ts = Type::Struct(TypeInfo { name: None, length: None, signed: None, fields: Some(fs), term: Some(declaration.clone()) });
                                     result.terms.insert(declaration.clone(), ts.clone());
                                 }
-                                return Type { datatype: DataType::Struct, name: name.clone(), length: None, signed: None, fields: None, term: Some(declaration.clone()) };
+                                return Type::Struct(TypeInfo { name: name.clone(), length: None, signed: None, fields: None, term: Some(declaration.clone()) });
                             }
                         },
                         Fields::UnnamedFields(v) => {
@@ -131,18 +111,18 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
                             for field in v {
                                 fields.push(get_type(container, None, &field, result, false));
                             }
-                            return Type {datatype: DataType::Variant, name: name.clone(), length: Some(v.len() as u32), signed: None, fields: Some(fields), term: None };
+                            return Type::EnumVariant(TypeInfo { name: name.clone(), length: Some(v.len() as u32), signed: None, fields: Some(fields), term: None })
                         },
-                        Fields::Empty => return Type { datatype: DataType::Variant, name: name.clone(), length: None, signed: None, fields: None, term: None },
+                        Fields::Empty => return Type::EnumVariant(TypeInfo { name: name.clone(), length: None, signed: None, fields: None, term: None }),
                     }
                 },
                 Definition::Array { elements: e, length: l } => {
                     let fields = vec![get_type(container, None, &e, result, false)];
-                    return Type {datatype: DataType::Array, name: name.clone(), length: Some(l.to_owned()), signed: None, fields: Some(fields), term: None }
+                    return Type::Array(TypeInfo { name: name.clone(), length: Some(l.to_owned()), signed: None, fields: Some(fields), term: None })
                 },
                 Definition::Sequence { elements: e } => {
                     let fields = vec![get_type(container, None, &e, result, false)];
-                    return Type {datatype: DataType::Vec, name: name.clone(), length: None, signed: None, fields: Some(fields), term: None }
+                    return Type::Vec(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields), term: None })
                 },
                 Definition::Enum {variants: v} => {
                     let found_enum = result.terms.get(&declaration.clone());
@@ -151,18 +131,18 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
                         for ev in v {
                             enums.push(get_type(container, Some(&ev.0), &ev.1, result, false));
                         }
-                        let ts = Type {datatype: DataType::Enum, name: None, length: Some(v.len() as u32), signed: None, fields: Some(enums), term: Some(declaration.clone()) };
+                        let ts = Type::Enum(TypeInfo { name: None, length: Some(v.len() as u32), signed: None, fields: Some(enums), term: Some(declaration.clone()) });
                         result.terms.insert(declaration.clone(), ts.clone());
                     }
-                    return Type {datatype: DataType::Enum, name: name.clone(), length: None, signed: None, fields: None, term: Some(declaration.clone()) }
+                    return Type::Enum(TypeInfo { name: name.clone(), length: None, signed: None, fields: None, term: Some(declaration.clone()) })
                 },
                 _ => {},
             }
         }
     }
     match declaration.as_str() {
-        "bool" => return Type { datatype: DataType::Bool, name: name.clone(), signed: None, length: None, fields: None, term: None},
-        "string" => return Type { datatype: DataType::String, name: name.clone(), signed: None, length: None, fields: None, term: None},
+        "bool" => return Type::Bool(TypeInfo {name: name.clone(), signed: None, length: None, fields: None, term: None}),
+        "string" => return Type::String(TypeInfo {name: name.clone(), signed: None, length: None, fields: None, term: None}),
         _ => {},
     };
     let re_unsigned_int = Regex::new(r"^u(\d+)$").unwrap();
@@ -170,7 +150,7 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
         Some(bits_info) => {
             let bytes = bits_info.get(1).unwrap().as_str().parse::<u32>().unwrap().checked_div(8).unwrap();
             if !(bytes == 1 || bytes == 2 || bytes == 4 || bytes == 8 || bytes == 16) { panic!("Invalid unsigned integer bytes") }
-            return Type {datatype: DataType::Int, name: name.clone(), signed: Some(false), length: Some(bytes), fields: None, term: None}
+            return Type::Integer(TypeInfo {name: name.clone(), signed: Some(false), length: Some(bytes), fields: None, term: None})
         },
         None => {},
     }
@@ -179,7 +159,7 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
         Some(bits_info) => {
             let bytes = bits_info.get(1).unwrap().as_str().parse::<u32>().unwrap().checked_div(8).unwrap();
             if !(bytes == 1 || bytes == 2 || bytes == 4 || bytes == 8 || bytes == 16) { panic!("Invalid signed integer bytes") }
-            return Type {datatype: DataType::Int, name: name.clone(), signed: Some(true), length: Some(bytes), fields: None, term: None}
+            return Type::Integer(TypeInfo {name: name.clone(), signed: Some(true), length: Some(bytes), fields: None, term: None})
         },
         None => {},
     }
@@ -188,7 +168,7 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
         Some(bits_info) => {
             let bytes = bits_info.get(1).unwrap().as_str().parse::<u32>().unwrap().checked_div(8).unwrap();
             if !(bytes == 4 || bytes == 8) { panic!("Invalid signed integer bytes") }
-            return Type {datatype: DataType::Float, name: name.clone(), length: Some(bytes), signed: None, fields: None, term: None}
+            return Type::Float(TypeInfo {name: name.clone(), length: Some(bytes), signed: None, fields: None, term: None})
         },
         None => {},
     }
@@ -202,7 +182,7 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
                     for e in ve {
                         fields.push(get_type(container, None, &e, result, false));
                     }
-                    return Type {datatype: DataType::Tuple, name: name.clone(), length: Some(ve.len() as u32), signed: None, fields: Some(fields), term: None }
+                    return Type::Tuple(TypeInfo { name: name.clone(), length: Some(ve.len() as u32), signed: None, fields: Some(fields), term: None })
                 },
                 _ => {}
             }
@@ -216,7 +196,7 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
             match array_def {
                 Definition::Array { elements: e, length: l } => {
                     let fields = vec![get_type(container, None, &e, result, false)];
-                    return Type {datatype: DataType::Array, name: name.clone(), length: Some(l.to_owned()), signed: None, fields: Some(fields), term: None }
+                    return Type::Array(TypeInfo { name: name.clone(), length: Some(l.to_owned()), signed: None, fields: Some(fields), term: None })
                 },
                 _ => {}
             }
@@ -230,7 +210,7 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
             match vec_def {
                 Definition::Sequence { elements: e } => {
                     let fields = vec![get_type(container, None, &e, result, false)];
-                    return Type {datatype: DataType::Vec, name: name.clone(), length: None, signed: None, fields: Some(fields), term: None }
+                    return Type::Vec(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields), term: None })
                 },
                 _ => {}
             }
@@ -244,7 +224,7 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
             match option_def {
                 Definition::Enum { variants: v } => {
                     let fields = vec![get_type(container, None, &v[1].1, result, false)];
-                    return Type {datatype: DataType::Option, name: name.clone(), length: None, signed: None, fields: Some(fields), term: None }
+                    return Type::Option(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields), term: None })
                 },
                 _ => {}
             }
@@ -261,7 +241,7 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
                         get_type(container, None, &v[0].1, result, false), // Ok
                         get_type(container, None, &v[1].1, result, false), // Err
                     ];
-                    return Type {datatype: DataType::Result, name: name.clone(), length: None, signed: None, fields: Some(fields), term: None }
+                    return Type::Result(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields), term: None })
                 },
                 _ => {}
             }
@@ -275,7 +255,7 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
             match hashset_def {
                 Definition::Sequence { elements: e } => {
                     let fields = vec![get_type(container, None, &e, result, false)];
-                    return Type {datatype: DataType::HashSet, name: name.clone(), length: None, signed: None, fields: Some(fields), term: None }
+                    return Type::HashSet(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields), term: None })
                 },
                 _ => {}
             }
@@ -289,107 +269,105 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
             match hashmap_def {
                 Definition::Sequence { elements: e } => {
                     let fields = vec![get_type(container, None, &e, result, false)];
-                    return Type {datatype: DataType::HashMap, name: name.clone(), length: None, signed: None, fields: Some(fields), term: None }
+                    return Type::HashMap(TypeInfo { name: name.clone(), length: None, signed: None, fields: Some(fields), term: None })
                 },
                 _ => {}
             }
         },
         None => {},
     }
-    Type::default()
+    Type::Undefined
 }
 
 struct TypeIterator<'a> {
     schema: &'a TypeSchema,
-    stack: Vec<(&'a Type, String)>,
-    seen: HashSet<String>,
+    stack: Vec<(&'a Type, &'a Type)>,
 }
 
 impl<'a> TypeIterator<'a> {
     fn new(schema: &'a TypeSchema) -> TypeIterator<'a> {
-        TypeIterator { stack: vec![(&schema.schema, String::new())], schema: schema, seen: HashSet::new() }
+        TypeIterator { stack: vec![(&Type::Undefined, &schema.schema)], schema: schema }
     }
 
-    fn add_child_nodes(&mut self, node: &'a Type, lookup: bool, schema: &'a TypeSchema) {
-        if node.fields.is_some() {
-            let subfields: &Vec<Type> = &node.fields.as_ref().unwrap().as_ref();
+    fn add_child_nodes(&mut self, tinfo: &'a TypeInfo, lookup: bool, schema: &'a TypeSchema, parent: &'a Type) {
+        if tinfo.fields.is_some() {
+            let subfields: &Vec<Type> = &tinfo.fields.as_ref().unwrap().as_ref();
             for child in subfields.iter().rev() {
-                self.stack.push((child, String::new()));
+                self.stack.push((parent, child));
             }
         } else if lookup {
-            let term = node.term.to_owned().unwrap();
-            if !self.seen.get(&term).is_some() {
-                self.seen.insert(term);
-                let rnode = schema.terms.get(&node.term.clone().unwrap());
-                if rnode.is_some() {
-                    self.add_nodes(&rnode.unwrap(), schema);
-                }
+            let rnode = schema.terms.get(&tinfo.term.clone().unwrap());
+            if rnode.is_some() {
+                self.add_nodes(&rnode.unwrap(), schema);
             }
         }
     }
 
     fn add_nodes(&mut self, node: &'a Type, schema: &'a TypeSchema) {
-        match node.datatype {
-            DataType::Undefined => {},
-            DataType::Struct => self.add_child_nodes(node, true, schema),
-            DataType::Enum => self.add_child_nodes(node, true, schema),
-            _ => self.add_child_nodes(node, false, schema),
+        match node {
+            Type::Bool(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::Integer(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::Float(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::String(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::Enum(ti) => self.add_child_nodes(&ti, true, schema, node),
+            Type::EnumVariant(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::Tuple(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::Struct(ti) => self.add_child_nodes(&ti, true, schema, node),
+            Type::Array(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::Vec(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::Option(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::Result(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::HashSet(ti) => self.add_child_nodes(&ti, false, schema, node),
+            Type::HashMap(ti) => self.add_child_nodes(&ti, false, schema, node),
+            _ => {}
         }
     }
 }
 
 impl<'a> Iterator for TypeIterator<'a> {
-    type Item = (&'a Type, String);
+    type Item = (&'a Type, &'a Type);
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.stack.pop() {
             None => None,
-            Some((node, path)) => {
+            Some((par, node)) => {
                 self.add_nodes(&node, &self.schema);
-                Some((node, path))
+                Some((par, node))
             }
         }
     }
 }
 
-fn build_rdf_instance(root: &Type) -> Result<FastGraph> {
-    let ex = Namespace::new("http://example.org/").unwrap();
+fn build_rdf_instance(root: &Type, parent: Option<&Type>) -> FastGraph {
+    //let ex = Namespace::new("http://example.org/").unwrap();
     //let foaf = Namespace::new("http://xmlns.com/foaf/0.1/").unwrap();
-    let mut graph: FastGraph = FastGraph::new();
-    let term = root.term.to_owned();
-    let name = root.name.to_owned();
-    let binding;
-    if term.is_some() {
-        binding = root.term.to_owned().unwrap();
-    } else if name.is_some() {
-        binding = root.name.to_owned().unwrap();
-    } else {
-        return Ok(graph)
-    }
-    //println!("{:?}", binding);
-    let base_uri = ex.get(binding.as_str()).unwrap();
-    match root.datatype {
-        DataType::Struct => {
-            graph.insert(&base_uri, &rdf::type_, &rdfs::Class)?;
+    let mut graph2: FastGraph = FastGraph::new();
+    let base_uri;
+    match root {
+        //Type::Bool(ti) => {},
+        Type::Integer(ti) => {
+            base_uri = ti.name.unwrap().copy();
         },
+        //Type::Float(ti) => {},
+        Type::String(ti) => {
+            base_uri = ti.name.unwrap().copy();
+        },
+        //Type::Enum(ti) => {},
+        //Type::EnumVariant(ti) => {},
+        //Type::Tuple(ti) => {},
+        //Type::Struct(ti) => {},
+        //Type::Array(ti) => {},
+        //Type::Vec(ti) => {},
+        //Type::Option(ti) => {},
+        //Type::Result(ti) => {},
+        //Type::HashSet(ti) => {},
+        //Type::HashMap(ti) => {},
         _ => {
-            graph.insert(&base_uri, &rdf::type_, &rdf::Property)?;
-        },
-        //DataType::Int(ti) => {},
-        //DataType::Struct(ti) => {
-        //DataType::Vec(ti) => {},
-        //DataType::Enum(ti) => {},
-        //DataType::Variant(ti) => {},
-        //DataType::Bool(ti) => {},
-        //DataType::Float(ti) => {},
-        //DataType::Tuple(ti) => {},
-        //DataType::Array(ti) => {},
-        //DataType::Option(ti) => {},
-        //DataType::Result(ti) => {},
-        //DataType::HashSet(ti) => {},
-        //DataType::HashMap(ti) => {},
+            base_uri = "";
+        }
     }
-    Ok(graph)
+    graph2.insert(&Iri::new(base_uri).unwrap(), &rdf::type_, &rdfs::Class).unwrap();
+    graph2
 }
 
 fn main() {
@@ -408,40 +386,40 @@ fn main() {
     //let def = ctr.definitions.get(&ctr.declaration).unwrap();
     //println!("Definition {:?}", def);
 
-    let mut tsch = TypeSchema { schema: Type::default(), terms: HashMap::new() };
+    let mut tsch = TypeSchema { schema: Type::Undefined, terms: HashMap::new() };
     tsch.schema = get_type(&ctr, Some(&ctr.declaration), &ctr.declaration, &mut tsch, true);
     //println!("Type {:?}", ty);
 
     // Serialize it to a JSON string.
-    let j = serde_json::to_string(&tsch).unwrap();
+    //let j = serde_json::to_string(&tsch).unwrap();
 
     // Print, write to a file, or send to an HTTP server.
-    println!("{}", j);
+    //println!("{}", j);
 
-    let mut graph: FastGraph = FastGraph::new();
     let mut iter = TypeIterator::new(&tsch);
     let mut counter: u32 = 0;
-    let mut seen: HashSet<String> = HashSet::new();
     while let Some(node) = iter.next() {
         counter += 1;
         println!("{:?}", counter);
-        println!("Item {:?}", node.0);
-        //println!("Parent {:?}", node.0);
-        if match node.0.datatype {
-            DataType::Struct => {
-                let term = node.0.term.to_owned().unwrap();
-                if seen.get(&term).is_some() { false } else { seen.insert(term); true }
-            },
-            DataType::Enum => {
-                let term = node.0.term.to_owned().unwrap();
-                if seen.get(&term).is_some() { false } else { seen.insert(term); true }
-            },
-            _ => true,
-        } {
-            graph.insert_all(build_rdf_instance(&node.0).unwrap().triples()).unwrap();
-        }
+        println!("Item {:?}", node.1);
+        println!("Parent {:?}", node.0);
         println!("");
     }
+
+    let alice = Person {
+        name: "Alice".to_string(),
+        age: 25,
+    };
+
+    let bob = Person {
+        name: "Bob".to_string(),
+        age: 30,
+    };
+    
+    let mut graph: FastGraph = FastGraph::new();
+    //graph.insert_all(build_rdf_instance(&alice).triples()).unwrap();
+    graph.insert_all(build_rdf_instance(&tsch.schema, None).triples()).unwrap();
+
     let mut nt_stringifier = NtSerializer::new_stringifier();
     let example2 = nt_stringifier.serialize_graph(&mut graph).unwrap().as_str();
     println!("The resulting graph\n{}", example2);
