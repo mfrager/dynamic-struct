@@ -48,17 +48,23 @@ pub fn struct_ser(input: &ItemStruct) -> syn::Result<TokenStream2> {
                     span: Span::call_site(),
                 };
                 let delta = quote! {
+                    CustomSerialize::push_node(&self.#field_idx, builder, #field_idx)?;
                     CustomSerialize::serialize(&self.#field_idx, builder)?;
+                    CustomSerialize::pop_node(&self.#field_idx, builder)?;
                 };
                 body.extend(delta);
             }
         }
         Fields::Unit => {}
     }
+    println!("{:?}", body.to_string());
     Ok(quote! {
         impl #impl_generics CustomSerialize for #name #ty_generics #where_clause {
             fn serialize<B: Build>(&self, builder: &mut B) -> ::core::result::Result<(), borsh::maybestd::io::Error> {
-                builder.build(None);
+                if builder.is_root() {
+                    builder.stack_push(0)?;
+                }
+                builder.build(None)?;
                 #body
                 Ok(())
             }
