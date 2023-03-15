@@ -16,13 +16,7 @@ struct PersonInfo {
 #[derive(BorshSerialize, BorshDeserialize, BorshSchema, CustomSerialize, Debug, Clone)]
 struct Person {
     name: String,
-    more: (PersonInfo, PersonInfo),
-    //uuid: u128,
-    //mode: u8,
-    //new: bool,
-    //fl1: f32,
-    //fl2: f64,
-    //vector: Vec<(u128, u64, String)>,
+    uuid: u128,
 }
 
 /*impl CustomSerialize for Person
@@ -44,13 +38,12 @@ fn main() {
     //uuid: 1234, mode: 123, name: "Bob".into(), new: false, fl1: 1.1, fl2: 2.2,
     let person = Person {
         name: "Bob".into(),
-        more: (
-            PersonInfo { data: "More 1".into() },
-            PersonInfo { data: "More 2".into() },
-        ),
+        uuid: 12345,
     };
 
     let tsch = get_schema::<Person>();
+    person.try_to_custom(&tsch).unwrap();
+
     /*let mut iter = TypeIterator::<Person>::new(&tsch);
     let mut counter: u32 = 0;
     //let mut seen: HashSet<String> = HashSet::new();
@@ -61,5 +54,4 @@ fn main() {
         //println!("Parent {:?}", node.0);
         println!("");
     }*/
-    person.try_to_custom(&tsch).unwrap();
 }

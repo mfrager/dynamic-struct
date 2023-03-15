@@ -57,7 +57,7 @@ pub fn struct_ser(input: &ItemStruct) -> syn::Result<TokenStream2> {
         }
         Fields::Unit => {}
     }
-    println!("{:?}", body.to_string());
+    //println!("{:?}", body.to_string());
     Ok(quote! {
         impl #impl_generics CustomSerialize for #name #ty_generics #where_clause {
             fn serialize<B: Build>(&self, builder: &mut B) -> ::core::result::Result<(), borsh::maybestd::io::Error> {
