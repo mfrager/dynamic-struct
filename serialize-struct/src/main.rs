@@ -1,5 +1,4 @@
 use borsh::{BorshSerialize, BorshDeserialize};
-use borsh::maybestd::io::{Result, Error};
 use borsh_derive::{BorshSchema};
 
 mod serialize;
@@ -46,5 +45,5 @@ fn main() {
         //println!("Parent {:?}", node.0);
         println!("");
     }
-    person.try_to_custom().unwrap();
+    person.try_to_custom(&tsch).unwrap();
 }

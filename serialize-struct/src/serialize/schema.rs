@@ -26,12 +26,12 @@ pub enum DataType {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Type {
-    datatype: DataType,
-    name: Option<String>,
-    term: Option<String>,
-    signed: Option<bool>,
-    length: Option<u32>,
-    fields: Option<Vec<Type>>,
+    pub datatype: DataType,
+    pub name: Option<String>,
+    pub term: Option<String>,
+    pub signed: Option<bool>,
+    pub length: Option<u32>,
+    pub fields: Option<Vec<Type>>,
 }
 
 impl Default for Type {
@@ -49,8 +49,8 @@ impl Default for Type {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TypeSchema {
-    schema: Type,
-    terms: HashMap<String, Type>,
+    pub schema: Type,
+    pub terms: HashMap<String, Type>,
 }
 
 pub fn get_schema<T: BorshSchemaTrait>() -> TypeSchema {
