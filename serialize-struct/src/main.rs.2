@@ -1,11 +1,17 @@
-use std::io::{Result, Write};
-use std::marker::PhantomData;
 use regex::Regex;
 use borsh::maybestd::collections::HashMap;
 use borsh::{BorshSerialize, BorshDeserialize};
 use borsh::schema::{BorshSchema as BorshSchemaTrait, BorshSchemaContainer, Definition, Fields};
 use borsh_derive::{BorshSchema};
 use serde_derive::{Serialize};
+use uuid::Uuid;
+use sophia::graph::{*, inmem::FastGraph};
+use sophia::iri::Iri;
+use sophia::ns::{Namespace, rdfs, rdf};
+use sophia::parser::turtle;
+use sophia::serializer::*;
+use sophia::serializer::nt::NtSerializer;
+use sophia::term::literal::convert::AsLiteral;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 struct TypeInfo {
@@ -36,44 +42,10 @@ enum Type {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct TypeSchema {
+struct TypeSchema {
     schema: Type,
     terms: HashMap<String, Type>,
 }
-
-pub struct CustomWriter<'a, T: BorshSchemaTrait + BorshSerialize> {
-    iter: TypeIterator<'a, T>,
-}
-
-impl<'a, T: BorshSchemaTrait + BorshSerialize> CustomWriter<'a, T> {
-    fn new(schema: &'a TypeSchema) -> Self {
-        let iter = TypeIterator::<T>::new(schema);
-        Self {
-            iter: iter,
-        }
-    }
-}
-
-impl<'a, T: BorshSchemaTrait + BorshSerialize> Write for CustomWriter<'a, T> {
-    fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        println!("Buffer: {}", buf.len().to_string());
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> Result<()> {
-        Ok(())
-    }
-}
-
-pub trait CustomSerialize: BorshSchemaTrait + BorshSerialize {
-    fn try_to_custom<'a, T: BorshSchemaTrait + BorshSerialize>(&'a self, schema: &'a TypeSchema) -> Result<CustomWriter<T>> {
-        let mut result = CustomWriter::<T>::new(schema);
-        self.serialize(&mut result)?;
-        Ok(result)
-    }
-}
-
-// Data schema 
 
 /*#[derive(BorshSerialize, BorshDeserialize, BorshSchema, Debug, Clone)]
 enum Something {
@@ -90,22 +62,12 @@ struct Other {
 
 #[derive(BorshSerialize, BorshDeserialize, BorshSchema, Debug, Clone)]
 struct Person {
-    uuid: u128,
     name: String,
-    cool: bool,
-    //other: Vec<Other>,
-    //friends: Vec<u128>,
+    age: u32,
 }
 
-impl CustomSerialize for Person {}
-
-// End data schema
-
-fn get_schema<T: BorshSchemaTrait>() -> TypeSchema {
-    let ctr = T::schema_container();
-    let mut tsch = TypeSchema { schema: Type::Undefined, terms: HashMap::new() };
-    tsch.schema = get_type(&ctr, Some(&ctr.declaration), &ctr.declaration, &mut tsch, true);
-    tsch
+fn get_schema<T: BorshSchemaTrait>() -> BorshSchemaContainer {
+    T::schema_container()
 }
 
 fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, declaration: &String, result: &mut TypeSchema, root: bool) -> Type {
@@ -317,15 +279,14 @@ fn get_type(container: &BorshSchemaContainer, field_name: Option<&String>, decla
     Type::Undefined
 }
 
-struct TypeIterator<'a, T> {
+struct TypeIterator<'a> {
     schema: &'a TypeSchema,
     stack: Vec<(&'a Type, &'a Type)>,
-    data: PhantomData<&'a T>,
 }
 
-impl<'a, T: BorshSchemaTrait> TypeIterator<'a, T> {
-    fn new(schema: &'a TypeSchema) -> TypeIterator<'a, T> {
-        TypeIterator { stack: vec![(&Type::Undefined, &schema.schema)], schema: schema, data: PhantomData {} }
+impl<'a> TypeIterator<'a> {
+    fn new(schema: &'a TypeSchema) -> TypeIterator<'a> {
+        TypeIterator { stack: vec![(&Type::Undefined, &schema.schema)], schema: schema }
     }
 
     fn add_child_nodes(&mut self, tinfo: &'a TypeInfo, lookup: bool, schema: &'a TypeSchema, parent: &'a Type) {
@@ -363,7 +324,7 @@ impl<'a, T: BorshSchemaTrait> TypeIterator<'a, T> {
     }
 }
 
-impl<'a, T: BorshSchemaTrait> Iterator for TypeIterator<'a, T> {
+impl<'a> Iterator for TypeIterator<'a> {
     type Item = (&'a Type, &'a Type);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -377,12 +338,41 @@ impl<'a, T: BorshSchemaTrait> Iterator for TypeIterator<'a, T> {
     }
 }
 
+fn build_rdf_instance(root: &Type, parent: Option<&Type>) -> FastGraph {
+    //let ex = Namespace::new("http://example.org/").unwrap();
+    //let foaf = Namespace::new("http://xmlns.com/foaf/0.1/").unwrap();
+    let mut graph2: FastGraph = FastGraph::new();
+    let base_uri;
+    match root {
+        //Type::Bool(ti) => {},
+        Type::Integer(ti) => {
+            base_uri = ti.name.unwrap().copy();
+        },
+        //Type::Float(ti) => {},
+        Type::String(ti) => {
+            base_uri = ti.name.unwrap().copy();
+        },
+        //Type::Enum(ti) => {},
+        //Type::EnumVariant(ti) => {},
+        //Type::Tuple(ti) => {},
+        //Type::Struct(ti) => {},
+        //Type::Array(ti) => {},
+        //Type::Vec(ti) => {},
+        //Type::Option(ti) => {},
+        //Type::Result(ti) => {},
+        //Type::HashSet(ti) => {},
+        //Type::HashMap(ti) => {},
+        _ => {
+            base_uri = "";
+        }
+    }
+    graph2.insert(&Iri::new(base_uri).unwrap(), &rdf::type_, &rdfs::Class).unwrap();
+    graph2
+}
+
 fn main() {
-    let person = Person { name: "Alison".into(), uuid: 30, cool: true };
-
-    let tsch = get_schema::<Person>();
-    person.try_to_custom::<Person>(&tsch).unwrap();
-
+    //let person = Person { name: "Alice".into(), age: 30 };
+    
     // Serialize the person struct to bytes
     //let encoded = person.try_to_vec().unwrap();
     
@@ -390,14 +380,14 @@ fn main() {
     //let decoded = Person::try_from_slice(&encoded).unwrap();
     //println!("{:?}", decoded); // Output: Person { name: "Alice", age: 30 }
 
-    //let ctr = get_schema::<Person>();
+    let ctr = get_schema::<Person>();
     //println!("Schema container {:?}", ctr);
 
     //let def = ctr.definitions.get(&ctr.declaration).unwrap();
     //println!("Definition {:?}", def);
 
-    //let mut tsch = TypeSchema { schema: Type::Undefined, terms: HashMap::new() };
-    //tsch.schema = get_type(&ctr, Some(&ctr.declaration), &ctr.declaration, &mut tsch, true);
+    let mut tsch = TypeSchema { schema: Type::Undefined, terms: HashMap::new() };
+    tsch.schema = get_type(&ctr, Some(&ctr.declaration), &ctr.declaration, &mut tsch, true);
     //println!("Type {:?}", ty);
 
     // Serialize it to a JSON string.
@@ -406,7 +396,7 @@ fn main() {
     // Print, write to a file, or send to an HTTP server.
     //println!("{}", j);
 
-    let mut iter = TypeIterator::<Person>::new(&tsch);
+    let mut iter = TypeIterator::new(&tsch);
     let mut counter: u32 = 0;
     while let Some(node) = iter.next() {
         counter += 1;
@@ -415,4 +405,22 @@ fn main() {
         println!("Parent {:?}", node.0);
         println!("");
     }
+
+    let alice = Person {
+        name: "Alice".to_string(),
+        age: 25,
+    };
+
+    let bob = Person {
+        name: "Bob".to_string(),
+        age: 30,
+    };
+    
+    let mut graph: FastGraph = FastGraph::new();
+    //graph.insert_all(build_rdf_instance(&alice).triples()).unwrap();
+    graph.insert_all(build_rdf_instance(&tsch.schema, None).triples()).unwrap();
+
+    let mut nt_stringifier = NtSerializer::new_stringifier();
+    let example2 = nt_stringifier.serialize_graph(&mut graph).unwrap().as_str();
+    println!("The resulting graph\n{}", example2);
 }

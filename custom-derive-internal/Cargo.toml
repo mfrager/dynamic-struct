@@ -1,0 +1,9 @@
+[package]
+name = "custom-derive-internal"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+proc-macro2 = "1"
+syn = {version = "1", features = ["full", "fold"] }
+quote = "1"
