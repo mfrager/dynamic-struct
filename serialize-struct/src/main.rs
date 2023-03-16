@@ -17,7 +17,7 @@ struct PersonInfo {
 struct Person {
     name: String,
     uuid: u128,
-    info: Vec<(PersonInfo, u8)>,
+    info: Vec<PersonInfo>,
 }
 
 /*impl CustomSerialize for Person
@@ -41,8 +41,9 @@ fn main() {
         name: "Bob".into(),
         uuid: 12345,
         info: vec![
-            (PersonInfo { data: "Hello".into() }, 10),
-            (PersonInfo { data: "World".into() }, 20),
+            PersonInfo { data: "Hello".into() },
+            PersonInfo { data: "World".into() },
+            PersonInfo { data: "Zoom".into() },
         ],
     };
 

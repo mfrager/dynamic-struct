@@ -2,19 +2,20 @@ use uuid::Uuid;
 use borsh::maybestd::io::Result;
 use sophia::graph::{*, inmem::FastGraph};
 use sophia::iri::Iri;
-use sophia::ns::{Namespace, rdfs, rdf};
-use sophia::parser::turtle;
+use sophia::ns::rdf;
 use sophia::serializer::*;
 use sophia::serializer::nt::NtSerializer;
-use sophia::term::Result as SophiaResult;
-use sophia::term::iri::error::InvalidIri;
 use sophia::term::literal::convert::AsLiteral;
+//use sophia::ns::{Namespace, rdfs, rdf};
+//use sophia::parser::turtle;
+//use sophia::term::Result as SophiaResult;
+//use sophia::term::iri::error::InvalidIri;
 
 pub mod schema;
 use schema::*;
 
 pub trait Build {
-    fn build(&mut self, debug: Option<&str>) -> Result<()>;
+    fn build(&mut self, data: Option<&str>) -> Result<()>;
     fn path_element(&mut self, node: &Type, index: usize, root: bool) -> Result<String>;
     fn stack_push(&mut self, index: usize) -> Result<()>;
     fn stack_pop(&mut self) -> Result<()>;
@@ -28,42 +29,55 @@ pub struct Builder<'a> {
     path: Vec<String>,
     uri: Vec<String>,
     root: bool,
-    graph: FastGraph,
+    pub graph: FastGraph,
 }
 
 impl<'a> Build for Builder<'a> {
-    fn build(&mut self, debug: Option<&str>) -> Result<()> {
+    fn build(&mut self, data: Option<&str>) -> Result<()> {
         let top_index = self.stack.len() - 1;
         let node = self.stack[top_index];
         let mut container = false;
+        let mut container_label: String = "".into();
         //println!("{:?}", self.path.join("/"));
         match node.0.datatype {
             DataType::Struct => {
-                println!("{:?}", node.0.datatype);
+                //println!("{:?}", node.0.datatype);
                 container = true;
+                container_label = format!("type/struct#{}", node.0.term.as_ref().unwrap().as_str()).to_string();
                 self.uri.push(self.get_uri(false));
             },
             DataType::Tuple => {
-                println!("{:?}", node.0.datatype);
+                //println!("{:?}", node.0.datatype);
                 container = true;
+                container_label = "type/tuple".into();
                 self.uri.push(self.get_uri(false));
             },
             DataType::Vec => {
-                println!("{:?}", node.0.datatype);
+                //println!("{:?}", node.0.datatype);
                 container = true;
+                container_label = "type/vec".into();
                 self.uri.push(self.get_uri(false));
             },
             _ => {
-                println!("{:?}: {}", node.0.datatype, debug.unwrap());
+                //println!("{:?}: {}", node.0.datatype, data.unwrap());
             }
         }
         //println!("{:?}", self.uri.join("|"));
+        let prop = self.get_uri(true);
         if container {
-            let class = self.get_uri(true);
-            println!("{:?} rdf:class {:?}", self.uri.last().unwrap(), class);
+            let base = "https://data.atellix.net";
+            let class = format!("{}/{}", base, container_label.as_str());
+            //println!("{:?} rdf:class {:?}", self.uri.last().unwrap(), class);
+            self.graph.insert(&Iri::new(self.uri.last().unwrap()).unwrap(), &rdf::type_, &Iri::new(class.as_str()).unwrap()).unwrap();
+            if self.uri.len() > 1 {
+                let parent_index = self.uri.len() - 2;
+                let parent = &self.uri[parent_index];
+                //println!("{:?} {:?} {:?}", parent, prop, self.uri.last().unwrap());
+                self.graph.insert(&Iri::new(parent.as_str()).unwrap(), &Iri::new(prop.as_str()).unwrap(), &Iri::new(self.uri.last().unwrap()).unwrap()).unwrap();
+            }
         } else {
-            let prop = self.get_uri(true);
-            println!("{:?} {:?} {:?}", self.uri.last().unwrap(), prop, debug.unwrap());
+            //println!("{:?} {:?} {:?}", self.uri.last().unwrap(), prop, data.unwrap());
+            self.graph.insert(&Iri::new(self.uri.last().unwrap()).unwrap(), &Iri::new(prop.as_str()).unwrap(), &data.unwrap().as_literal()).unwrap();
         }
         Ok(())
     }
@@ -163,6 +177,9 @@ pub trait CustomSerialize {
             graph: FastGraph::new(),
         };
         self.serialize(&mut b)?;
+        let mut ntstr = NtSerializer::new_stringifier();
+        let gr = ntstr.serialize_graph(&mut b.graph).unwrap().as_str();
+        println!("{}", gr);
         Ok(())
     }
 
