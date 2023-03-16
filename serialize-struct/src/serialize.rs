@@ -16,11 +16,13 @@ pub trait Build {
     fn stack_push(&mut self, index: usize) -> Result<()>;
     fn stack_pop(&mut self) -> Result<()>;
     fn is_root(&self) -> bool;
+    fn path_element(&mut self, node: &Type, index: usize, root: bool) -> Result<String>;
 }
 
 pub struct Builder<'a> {
     schema: &'a TypeSchema,
-    stack: Vec<&'a Type>,
+    stack: Vec<(&'a Type, usize)>,
+    path: Vec<String>,
     root: bool,
 }
 
@@ -28,15 +30,16 @@ impl<'a> Build for Builder<'a> {
     fn build(&mut self, debug: Option<&str>) -> Result<()> {
         let top_index = self.stack.len() - 1;
         let node = self.stack[top_index];
-        match node.datatype {
+        println!("{:?}", self.path.join("/"));
+        match node.0.datatype {
             DataType::Struct => {
-                println!("{:?}", node.datatype);
+                println!("{:?}", node.0.datatype);
             },
             DataType::Tuple => {
-                println!("{:?}", node.datatype);
+                println!("{:?}", node.0.datatype);
             },
             _ => {
-                println!("{:?}: {}", node.datatype, debug.unwrap());
+                println!("{:?}: {}", node.0.datatype, debug.unwrap());
             }
         }
         Ok(())
@@ -47,32 +50,58 @@ impl<'a> Build for Builder<'a> {
     }
 
     fn stack_push(&mut self, index: usize) -> Result<()> {
+        let pe;
         if self.root {
             self.root = false;
-            self.stack.push(&self.schema.schema);
+            self.stack.push((&self.schema.schema, 0));
+            pe = self.path_element(&self.schema.schema, 0, true)?;
         } else {
             let top_index = self.stack.len() - 1;
             let top_node = self.stack[top_index];
-            //println!("TI: {} I: {} N: {:?}", top_index.to_string(), index.to_string(), top_node);
             let field;
-            if top_node.fields.is_none() && top_node.term.is_some() {
-                let k = top_node.term.as_ref().unwrap();
+            if top_node.0.fields.is_none() && top_node.0.term.is_some() {
+                let k = top_node.0.term.as_ref().unwrap();
                 let node = self.schema.terms.get(k).unwrap();
                 field = &node.fields.as_ref().unwrap()[index];
             } else {
-                field = &top_node.fields.as_ref().unwrap()[index];
+                field = &top_node.0.fields.as_ref().unwrap()[index];
             }
-            self.stack.push(field);
             //println!("Push: {:?}", self.stack);
+            self.stack.push((field, index));
+            pe = self.path_element(field, index, false)?;
         }
+        self.path.push(pe);
         Ok(())
     }
 
     fn stack_pop(&mut self) -> Result<()> {
-        self.stack.pop();
         //println!("Pop: {:?}", self.stack);
-        //println!();
+        self.stack.pop();
+        self.path.pop();
         Ok(())
+    }
+
+    fn path_element(&mut self, node: &Type, index: usize, root: bool) -> Result<String> {
+        match node.datatype {
+            DataType::Struct => {
+                if root {
+                    return Ok(node.term.as_ref().unwrap().to_string())
+                } else {
+                    if node.name.as_ref().is_some() {
+                        return Ok(node.name.as_ref().unwrap().to_string())
+                    } else {
+                        return Ok(format!("{}", index.to_string()).to_string())
+                    }
+                }
+            },
+            _ => {
+                if node.name.as_ref().is_some() {
+                    return Ok(node.name.as_ref().unwrap().to_string())
+                } else {
+                    return Ok(format!("{}", index.to_string()).to_string())
+                }
+            },
+        }
     }
 }
 
@@ -83,6 +112,7 @@ pub trait CustomSerialize {
         let mut b = Builder {
             schema,
             stack: vec![],
+            path: vec![],
             root: true,
         };
         self.serialize(&mut b)?;

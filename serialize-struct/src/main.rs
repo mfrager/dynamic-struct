@@ -17,6 +17,7 @@ struct PersonInfo {
 struct Person {
     name: String,
     uuid: u128,
+    info: Vec<(PersonInfo, u8)>,
 }
 
 /*impl CustomSerialize for Person
@@ -39,6 +40,10 @@ fn main() {
     let person = Person {
         name: "Bob".into(),
         uuid: 12345,
+        info: vec![
+            (PersonInfo { data: "Hello".into() }, 10),
+            (PersonInfo { data: "World".into() }, 20),
+        ],
     };
 
     let tsch = get_schema::<Person>();
