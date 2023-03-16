@@ -1,48 +1,81 @@
-use borsh::maybestd::{
-    //borrow::{Cow, ToOwned},
-    //boxed::Box,
-    //collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, LinkedList, VecDeque},
-    //io::{ErrorKind, Result, Write},
-    io::Result,
-    //string::String,
-    //vec::Vec,
-};
+use uuid::Uuid;
+use borsh::maybestd::io::Result;
+use sophia::graph::{*, inmem::FastGraph};
+use sophia::iri::Iri;
+use sophia::ns::{Namespace, rdfs, rdf};
+use sophia::parser::turtle;
+use sophia::serializer::*;
+use sophia::serializer::nt::NtSerializer;
+use sophia::term::Result as SophiaResult;
+use sophia::term::iri::error::InvalidIri;
+use sophia::term::literal::convert::AsLiteral;
 
 pub mod schema;
 use schema::*;
 
 pub trait Build {
     fn build(&mut self, debug: Option<&str>) -> Result<()>;
+    fn path_element(&mut self, node: &Type, index: usize, root: bool) -> Result<String>;
     fn stack_push(&mut self, index: usize) -> Result<()>;
     fn stack_pop(&mut self) -> Result<()>;
     fn is_root(&self) -> bool;
-    fn path_element(&mut self, node: &Type, index: usize, root: bool) -> Result<String>;
+    fn get_uri(&self, instance: bool) -> String;
 }
 
 pub struct Builder<'a> {
     schema: &'a TypeSchema,
     stack: Vec<(&'a Type, usize)>,
     path: Vec<String>,
+    uri: Vec<String>,
     root: bool,
+    graph: FastGraph,
 }
 
 impl<'a> Build for Builder<'a> {
     fn build(&mut self, debug: Option<&str>) -> Result<()> {
         let top_index = self.stack.len() - 1;
         let node = self.stack[top_index];
-        println!("{:?}", self.path.join("/"));
+        let mut container = false;
+        //println!("{:?}", self.path.join("/"));
         match node.0.datatype {
             DataType::Struct => {
                 println!("{:?}", node.0.datatype);
+                container = true;
+                self.uri.push(self.get_uri(false));
             },
             DataType::Tuple => {
                 println!("{:?}", node.0.datatype);
+                container = true;
+                self.uri.push(self.get_uri(false));
+            },
+            DataType::Vec => {
+                println!("{:?}", node.0.datatype);
+                container = true;
+                self.uri.push(self.get_uri(false));
             },
             _ => {
                 println!("{:?}: {}", node.0.datatype, debug.unwrap());
             }
         }
+        //println!("{:?}", self.uri.join("|"));
+        if container {
+            let class = self.get_uri(true);
+            println!("{:?} rdf:class {:?}", self.uri.last().unwrap(), class);
+        } else {
+            let prop = self.get_uri(true);
+            println!("{:?} {:?} {:?}", self.uri.last().unwrap(), prop, debug.unwrap());
+        }
         Ok(())
+    }
+
+    fn get_uri(&self, instance: bool) -> String {
+        let base = "https://data.atellix.net";
+        if instance {
+            format!("{}/{}", base, self.path.join("/").as_str()).to_string()
+        } else {
+            let uuid = Uuid::new_v4();
+            format!("{}/{}#{}", base, self.path.join("/").as_str(), uuid).to_string()
+        }
     }
 
     fn is_root(&self) -> bool {
@@ -76,8 +109,20 @@ impl<'a> Build for Builder<'a> {
 
     fn stack_pop(&mut self) -> Result<()> {
         //println!("Pop: {:?}", self.stack);
-        self.stack.pop();
         self.path.pop();
+        let node = self.stack.pop().unwrap();
+        match node.0.datatype {
+            DataType::Struct => {
+                self.uri.pop();
+            },
+            DataType::Tuple => {
+                self.uri.pop();
+            },
+            DataType::Vec => {
+                self.uri.pop();
+            },
+            _ => {}
+        }
         Ok(())
     }
 
@@ -113,7 +158,9 @@ pub trait CustomSerialize {
             schema,
             stack: vec![],
             path: vec![],
+            uri: vec![],
             root: true,
+            graph: FastGraph::new(),
         };
         self.serialize(&mut b)?;
         Ok(())
